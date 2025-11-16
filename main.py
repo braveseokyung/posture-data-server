@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session as OrmSession
 #   POSTGRES_USER: posture
 #   POSTGRES_PASSWORD: posture_pw
 #   POSTGRES_DB: posture_dev
-DATABASE_URL = "postgresql://posture:posture_pw@localhost:5433/posture_dev"
+DATABASE_URL = "postgresql://posture:posture_pw@localhost:5432/posture_dev"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
