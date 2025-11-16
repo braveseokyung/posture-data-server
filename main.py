@@ -145,7 +145,7 @@ class VideoUploadResponse(BaseModel):
     filePath: str
     startOffsetMs: int
     fps: int
-    durationMs: int | None
+    durationMs: int | None = None
 
 
 # -----------------------------
@@ -302,4 +302,5 @@ async def upload_video(
         "filePath": file_url,
         "startOffsetMs": startOffsetMs,
         "fps": fps,
+        "durationMs": video.duration_ms,
     }
