@@ -1,0 +1,28 @@
+services:
+  db:
+    image: postgres:16
+    container_name: posture-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: posture
+      POSTGRES_PASSWORD: posture_pw
+      POSTGRES_DB: posture_dev
+    ports:
+      - "5433:5432"   # EC2에서 직접 DB 보고 싶으면 유지, 아니면 이 줄 지워도 됨
+    volumes:
+      - posture_pg_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: posture-api
+    depends_on:
+      - db
+    environment:
+      # 컨테이너 안에서는 hostname = db
+      DATABASE_URL: postgresql://posture:posture_pw@db:5432/posture_dev
+    ports:
+      - "8000:8000"   # 바깥에서 접속할 포트
+    # 개발용: 코드 자동 리로드 필요하면 나중에 마운트 설정도 가능
+
+volumes:
+  posture_pg_data:

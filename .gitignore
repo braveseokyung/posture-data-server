@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.log
+
+# Virtual env
+.venv/
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Upload / data
+videos/
+*.mp4
+
+# Env files (나중에 생길 수 있는 것들)
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
