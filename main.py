@@ -88,7 +88,7 @@ class Video(Base):
     start_offset_ms = Column(Integer, nullable=False)
     fps = Column(Integer, nullable=False)
     duration_ms = Column(Integer, nullable=True)
-    created_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 # 실제 테이블 생성
