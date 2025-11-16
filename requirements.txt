@@ -1,3 +1,4 @@
 fastapi[standard]
 sqlalchemy
 psycopg2-binary
+boto3

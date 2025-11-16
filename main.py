@@ -5,12 +5,20 @@ from pydantic import BaseModel, Field
 from typing import List
 from datetime import datetime, timedelta
 import uuid
+import boto3
 import os
 
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float, DateTime, ForeignKey
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, Session as OrmSession
+
+# --- S3 설정 (IAM Role 사용) ---
+AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
+AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "posture-video-bucket")
+
+# IAM Role 덕분에 access key/secret 없이 client 생성 가능
+s3 = boto3.client("s3", region_name=AWS_REGION)
 
 # -----------------------------
 # DB 설정 (docker-compose 기준 Postgres)
@@ -243,50 +251,55 @@ def upload_sensor_batch(batch: SensorBatchIn, db: OrmSession = Depends(get_db)):
     )
 
 
-# 3) 영상 업로드 (로컬 디렉토리에 저장)
-@app.post("/videos/upload", response_model=VideoUploadResponse)
+# 3) 비디오 업로드 (S3에 저장)
+@app.post("/videos/upload")
 async def upload_video(
     sessionId: str = Form(...),
     startOffsetMs: int = Form(...),
     fps: int = Form(...),
-    videoFile: UploadFile = File(...),
-    db: OrmSession = Depends(get_db),
+    videoFile: UploadFile = File(...)
 ):
-    # 세션 존재 여부 확인
-    session = db.query(Session).filter(Session.id == sessionId).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    # 확장자 추출 (없으면 mp4로 기본)
+    filename = videoFile.filename or "video.mp4"
+    if "." in filename:
+        ext = filename.rsplit(".", 1)[-1]
+    else:
+        ext = "mp4"
 
-    os.makedirs("videos", exist_ok=True)
+    # S3에 저장할 key (폴더 느낌으로 videos/ 밑에 정리)
+    file_key = f"videos/{sessionId}_{uuid.uuid4().hex}.{ext}"
 
-    ext = os.path.splitext(videoFile.filename or "")[1] or ".mp4"
-    filename = f"{sessionId}_{uuid.uuid4().hex[:8]}{ext}"
-    file_path = os.path.join("videos", filename)
+    # S3로 업로드
+    try:
+        # fileobj 기반 업로드
+        s3.upload_fileobj(videoFile.file, AWS_S3_BUCKET, file_key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"S3 upload failed: {e}")
 
-    with open(file_path, "wb") as f:
-        content = await videoFile.read()
-        f.write(content)
+    # S3 URL 생성
+    file_url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{file_key}"
 
-    created_at = now_utc()
+    # DB 저장
+    db = SessionLocal()
+    try:
+        video = Video(
+            sessionId=sessionId,
+            filePath=file_url,      # 여기 중요: 로컬 경로 대신 S3 URL 저장
+            startOffsetMs=startOffsetMs,
+            fps=fps,
+            durationMs=None,        # 나중에 처리하면 업데이트
+        )
+        db.add(video)
+        db.commit()
+        db.refresh(video)
+    finally:
+        db.close()
 
-    video = Video(
-        session_id=sessionId,
-        file_path=file_path,   # 나중에 S3 경로로 바꿀 수 있음
-        start_offset_ms=startOffsetMs,
-        fps=fps,
-        duration_ms=None,
-        created_at=created_at,
-    )
-    db.add(video)
-    db.commit()
-    db.refresh(video)
-
-    return VideoUploadResponse(
-        status="ok",
-        videoId=video.id,
-        sessionId=sessionId,
-        filePath=file_path,
-        startOffsetMs=startOffsetMs,
-        fps=fps,
-        durationMs=video.duration_ms,
-    )
+    return {
+        "status": "ok",
+        "videoId": video.id,
+        "sessionId": sessionId,
+        "fileUrl": file_url,
+        "startOffsetMs": startOffsetMs,
+        "fps": fps,
+    }

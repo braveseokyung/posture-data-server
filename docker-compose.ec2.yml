@@ -18,6 +18,8 @@ services:
     environment:
       # 컨테이너 안에서는 hostname = db
       DATABASE_URL: postgresql://posture:posture_pw@db:5432/posture_dev
+      AWS_REGION: ap-northeast-2
+      AWS_S3_BUCKET: posture-video-bucket
     ports:
       - "8000:8000"   # 바깥에서 접속할 포트
     # 개발용: 코드 자동 리로드 필요하면 나중에 마운트 설정도 가능
