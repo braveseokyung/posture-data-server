@@ -252,7 +252,7 @@ def upload_sensor_batch(batch: SensorBatchIn, db: OrmSession = Depends(get_db)):
 
 
 # 3) 비디오 업로드 (S3에 저장)
-@app.post("/videos/upload")
+@app.post("/videos/upload", response_model=VideoUploadResponse)
 async def upload_video(
     sessionId: str = Form(...),
     startOffsetMs: int = Form(...),
@@ -283,11 +283,11 @@ async def upload_video(
     db = SessionLocal()
     try:
         video = Video(
-            sessionId=sessionId,
-            filePath=file_url,      # 여기 중요: 로컬 경로 대신 S3 URL 저장
-            startOffsetMs=startOffsetMs,
+            session_id=sessionId,
+            file_path=file_url,
+            start_offset_ms=startOffsetMs,
             fps=fps,
-            durationMs=None,        # 나중에 처리하면 업데이트
+            duration_ms=None,
         )
         db.add(video)
         db.commit()
@@ -299,7 +299,7 @@ async def upload_video(
         "status": "ok",
         "videoId": video.id,
         "sessionId": sessionId,
-        "fileUrl": file_url,
+        "filePath": file_url,
         "startOffsetMs": startOffsetMs,
         "fps": fps,
     }
