@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import uuid
 import boto3
 import os
+import math
 
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float, DateTime, ForeignKey
@@ -16,6 +17,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session as OrmSession
 # --- S3 설정 (IAM Role 사용) ---
 AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
 AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "posture-video-bucket")
+FORWARD_TILT_THRESHOLD_DEG = 25.0  # 거북목 판단 기준 각도 (deg)
 
 # IAM Role 덕분에 access key/secret 없이 client 생성 가능
 s3 = boto3.client("s3", region_name=AWS_REGION)
@@ -89,6 +91,24 @@ class Video(Base):
     fps = Column(Integer, nullable=False)
     duration_ms = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+class QuaternionPostureIn(BaseModel):
+    """
+    앱에서 quaternion 하나 보냈을 때 사용하는 입력 스키마
+    """
+    qw: float
+    qx: float
+    qy: float
+    qz: float
+
+
+class QuaternionPostureResponse(BaseModel):
+    """
+    quaternion -> 거북목 판단 결과 반환 스키마
+    """
+    isTurtleNeck: bool
+    pitchDeg: float
+    thresholdDeg: float
 
 
 # 실제 테이블 생성
@@ -304,3 +324,43 @@ async def upload_video(
         "fps": fps,
         "durationMs": video.duration_ms,
     }
+
+
+
+def quaternion_to_pitch_deg(qw: float, qx: float, qy: float, qz: float) -> float:
+    """
+    Quaternion(qw, qx, qy, qz) -> pitch(앞/뒤로 숙인 각도, deg)
+    - 여기서는 일반적인 yaw-pitch-roll 변환식 중 pitch만 사용
+    - 결과는 degree(도) 단위로 반환
+    """
+    # sin(pitch) 계산
+    sinp = 2.0 * (qw * qy - qz * qx)
+
+    # 수치 오차 방지: asin 입력이 -1~1을 넘지 않도록 클램핑
+    if abs(sinp) >= 1:
+        pitch_rad = math.copysign(math.pi / 2, sinp)  # ±90도
+    else:
+        pitch_rad = math.asin(sinp)
+
+    pitch_deg = math.degrees(pitch_rad)
+    return pitch_deg
+
+
+def is_turtle_neck_by_pitch(pitch_deg: float) -> bool:
+    """
+    pitch_deg(머리 숙인 각도, deg)를 기준으로 거북목 여부 판단
+    """
+    return pitch_deg >= FORWARD_TILT_THRESHOLD_DEG
+
+@app.post("/posture-from-quarternion", response_model=QuaternionPostureResponse)
+def posture_from_quaternion(payload: QuaternionPostureIn):
+    pitch_deg = quaternion_to_pitch_deg(
+        payload.qw, payload.qx, payload.qy, payload.qz
+    )
+    is_turtle = is_turtle_neck_by_pitch(pitch_deg)
+
+    return QuaternionPostureResponse(
+        isTurtleNeck=is_turtle,
+        pitchDeg=pitch_deg,
+        thresholdDeg=FORWARD_TILT_THRESHOLD_DEG,
+    )
