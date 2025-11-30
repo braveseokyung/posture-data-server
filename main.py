@@ -352,7 +352,7 @@ def is_turtle_neck_by_pitch(pitch_deg: float) -> bool:
     """
     return pitch_deg >= FORWARD_TILT_THRESHOLD_DEG
 
-@app.post("/posture-from-quarternion", response_model=QuaternionPostureResponse)
+@app.post("/posture-from-quaternion", response_model=QuaternionPostureResponse)
 def posture_from_quaternion(payload: QuaternionPostureIn):
     pitch_deg = quaternion_to_pitch_deg(
         payload.qw, payload.qx, payload.qy, payload.qz
