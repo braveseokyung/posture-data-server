@@ -3,7 +3,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import boto3
 import os
@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker, declarative_base, Session as OrmSession
 AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
 AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "posture-video-bucket")
 FORWARD_TILT_THRESHOLD_DEG = 25.0  # 거북목 판단 기준 각도 (deg)
+PRESIGN_EXPIRES_IN = 3600  # presigned URL 유효 시간(초)
 
 # IAM Role 덕분에 access key/secret 없이 client 생성 가능
 s3 = boto3.client("s3", region_name=AWS_REGION)
@@ -57,40 +58,130 @@ class Session(Base):
     user_id = Column(String, nullable=False)
     device_id = Column(String, nullable=False)
     note = Column(String, nullable=True)
-    created_at = Column(DateTime, nullable=False)  # 세션 시작 시각(UTC)
+    video_file_path = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)  # 세션 시작 시각(UTC)
 
 
 class SensorSample(Base):
     __tablename__ = "sensor_samples"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    session_id = Column(String, ForeignKey("sessions.id"), index=True, nullable=False)
-    device_id = Column(String, nullable=False)
+    id = Column(Integer, primary_key=True, index=True)
 
-    # 세션 시작 기준 offset (ms)
+    session_id = Column(String, index=True, nullable=False)
+    device_id = Column(String, index=True, nullable=False)
+
     offset_ms = Column(Integer, nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False)
 
-    # 절대 시간 (UTC) — 나중에 Timescale hypertable 만들 때 기준 컬럼
-    ts = Column(DateTime, nullable=False, index=True)
+    # attitude
+    attitude_pitch = Column(Float, nullable=False)
+    attitude_roll = Column(Float, nullable=False)
+    attitude_yaw = Column(Float, nullable=False)
 
-    ax = Column(Float, nullable=False)
-    ay = Column(Float, nullable=False)
-    az = Column(Float, nullable=False)
-    gx = Column(Float, nullable=False)
-    gy = Column(Float, nullable=False)
-    gz = Column(Float, nullable=False)
+    # rotation rate
+    rot_x = Column(Float, nullable=False)
+    rot_y = Column(Float, nullable=False)
+    rot_z = Column(Float, nullable=False)
 
+    # gravity
+    grav_x = Column(Float, nullable=False)
+    grav_y = Column(Float, nullable=False)
+    grav_z = Column(Float, nullable=False)
+
+    # user acceleration
+    acc_x = Column(Float, nullable=False)
+    acc_y = Column(Float, nullable=False)
+    acc_z = Column(Float, nullable=False)
 
 class Video(Base):
     __tablename__ = "videos"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)  # videoId
-    session_id = Column(String, ForeignKey("sessions.id"), index=True, nullable=False)
-    file_path = Column(String, nullable=False)
-    start_offset_ms = Column(Integer, nullable=False)
-    fps = Column(Integer, nullable=False)
-    duration_ms = Column(Integer, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    id = Column(Integer, primary_key=True, index=True)
+
+    session_id = Column(String, index=True, nullable=False)
+    device_id = Column(String, index=True, nullable=False)
+
+    file_path = Column(String, nullable=False)          # S3 URL
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    video_start_ts = Column(DateTime(timezone=True), nullable=False) # 세션 시작 시각
+
+
+# 실제 테이블 생성
+Base.metadata.create_all(bind=engine)
+
+
+# -----------------------------
+# Pydantic 스키마
+# -----------------------------
+
+class HealthResponse(BaseModel):
+    status: str
+    timeMs: int
+
+class Attitude(BaseModel):
+    pitch: float
+    roll: float
+    yaw: float
+
+
+class Vector3(BaseModel):
+    x: float
+    y: float
+    z: float
+
+
+class SensorSampleIn(BaseModel):
+    offsetMs: int
+    attitude: Attitude
+    rotationRate: Vector3
+    gravity: Vector3
+    userAcceleration: Vector3
+
+
+class SensorBatchIn(BaseModel):
+    sessionId: str
+    deviceId: str
+    sessionStartTsMs: int
+    samples: List[SensorSampleIn]
+
+class SensorBatchResponse(BaseModel):
+    status: str
+    sessionId: str
+    deviceId: str
+    received: int
+    firstOffsetMs: int
+    lastOffsetMs: int
+
+class VideoPresignRequest(BaseModel):
+    sessionId: str
+    deviceId: str
+    # 확장자, 기본은 iOS mov
+    ext: str = "mov"
+    sessionStartTsMs: int
+
+
+class VideoPresignResponse(BaseModel):
+    uploadUrl: str  # 여기에 PUT 업로드
+    fileKey: str    # S3 object key (나중에 DB 저장용)
+    filePath: str   # 공개 URL (분석/조회용)
+    expiresIn: int  # presigned URL 유효 시간(초)
+
+
+class VideoCompleteRequest(BaseModel):
+    sessionId: str
+    deviceId: str
+    fileKey: str               # presign 에서 받은 S3 object key
+    sessionStartTsMs: int      # 센서랑 맞춘 세션 시작 epoch ms
+
+
+class VideoUploadResponse(BaseModel):
+    status: str
+    videoId: int
+    sessionId: str
+    deviceId: str
+    filePath: str
+    sessionStartTsMs: int
+
 
 class QuaternionPostureIn(BaseModel):
     """
@@ -111,63 +202,6 @@ class QuaternionPostureResponse(BaseModel):
     thresholdDeg: float
 
 
-# 실제 테이블 생성
-Base.metadata.create_all(bind=engine)
-
-
-# -----------------------------
-# Pydantic 스키마
-# -----------------------------
-class SessionCreate(BaseModel):
-    userId: str
-    deviceId: str
-    note: str | None = None
-
-
-class SessionResponse(BaseModel):
-    sessionId: str
-    createdAtMs: int
-
-
-class SensorSampleIn(BaseModel):
-    offsetMs: int = Field(..., description="세션 시작 기준 offset (ms)")
-    ax: float
-    ay: float
-    az: float
-    gx: float
-    gy: float
-    gz: float
-
-
-class SensorBatchIn(BaseModel):
-    sessionId: str
-    deviceId: str
-    samples: List[SensorSampleIn]
-
-
-class SensorBatchResponse(BaseModel):
-    status: str
-    sessionId: str
-    received: int
-    firstOffsetMs: int | None = None
-    lastOffsetMs: int | None = None
-
-
-class HealthResponse(BaseModel):
-    status: str
-    timeMs: int
-
-
-class VideoUploadResponse(BaseModel):
-    status: str
-    videoId: int
-    sessionId: str
-    filePath: str
-    startOffsetMs: int
-    fps: int
-    durationMs: int | None = None
-
-
 # -----------------------------
 # FastAPI 앱
 # -----------------------------
@@ -186,7 +220,7 @@ app.add_middleware(
 # 유틸 함수
 # -----------------------------
 def now_utc() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def now_ms() -> int:
@@ -204,57 +238,42 @@ def generate_session_id() -> str:
 def health_check():
     return HealthResponse(status="ok", timeMs=now_ms())
 
-
-# 1) 세션 생성
-@app.post("/sessions", response_model=SessionResponse)
-def create_session(payload: SessionCreate, db: OrmSession = Depends(get_db)):
-    session_id = generate_session_id()
-    created_at = now_utc()
-
-    db_session = Session(
-        id=session_id,
-        user_id=payload.userId,
-        device_id=payload.deviceId,
-        note=payload.note,
-        created_at=created_at,
-    )
-    db.add(db_session)
-    db.commit()
-
-    return SessionResponse(
-        sessionId=session_id,
-        createdAtMs=int(created_at.timestamp() * 1000),
-    )
-
-
-# 2) 센서 배치 업로드
 @app.post("/sensor/batch", response_model=SensorBatchResponse)
-def upload_sensor_batch(batch: SensorBatchIn, db: OrmSession = Depends(get_db)):
-    # 세션 존재 여부 확인
-    session = db.query(Session).filter(Session.id == batch.sessionId).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+def upload_sensor_batch(
+    batch: SensorBatchIn,
+    db: OrmSession = Depends(get_db),
+):
+    # 1) 샘플 유효성 검사
     if not batch.samples:
         raise HTTPException(status_code=400, detail="No samples provided")
 
-    base_time: datetime = session.created_at  # 세션 시작 시각 기준
+    # 2) 세션 시작 시각
+    base_time = datetime.fromtimestamp(batch.sessionStartTsMs / 1000, tz=timezone.utc)
 
     samples_to_add: list[SensorSample] = []
+
     for s in batch.samples:
+        # 세션 시작시간 + offsetMs → 실제 측정 시각
         ts = base_time + timedelta(milliseconds=s.offsetMs)
+
         samples_to_add.append(
             SensorSample(
                 session_id=batch.sessionId,
                 device_id=batch.deviceId,
                 offset_ms=s.offsetMs,
                 ts=ts,
-                ax=s.ax,
-                ay=s.ay,
-                az=s.az,
-                gx=s.gx,
-                gy=s.gy,
-                gz=s.gz,
+                attitude_pitch=s.attitude.pitch,
+                attitude_roll=s.attitude.roll,
+                attitude_yaw=s.attitude.yaw,
+                rot_x=s.rotationRate.x,
+                rot_y=s.rotationRate.y,
+                rot_z=s.rotationRate.z,
+                grav_x=s.gravity.x,
+                grav_y=s.gravity.y,
+                grav_z=s.gravity.z,
+                acc_x=s.userAcceleration.x,
+                acc_y=s.userAcceleration.y,
+                acc_z=s.userAcceleration.z,
             )
         )
 
@@ -262,69 +281,99 @@ def upload_sensor_batch(batch: SensorBatchIn, db: OrmSession = Depends(get_db)):
     db.commit()
 
     offsets = [s.offsetMs for s in batch.samples]
+
     return SensorBatchResponse(
         status="ok",
         sessionId=batch.sessionId,
+        deviceId=batch.deviceId,
         received=len(batch.samples),
         firstOffsetMs=min(offsets),
         lastOffsetMs=max(offsets),
     )
 
 
-# 3) 비디오 업로드 (S3에 저장)
-@app.post("/videos/upload", response_model=VideoUploadResponse)
-async def upload_video(
-    sessionId: str = Form(...),
-    startOffsetMs: int = Form(...),
-    fps: int = Form(...),
-    videoFile: UploadFile = File(...)
-):
-    # 확장자 추출 (없으면 mp4로 기본)
-    filename = videoFile.filename or "video.mp4"
-    if "." in filename:
-        ext = filename.rsplit(".", 1)[-1]
-    else:
-        ext = "mp4"
+@app.post("/videos/presign", response_model=VideoPresignResponse)
+def get_video_presigned_url(body: VideoPresignRequest):
+    # 1) 확장자 정리
+    ext = body.ext.lower()
+    if ext not in ["mov", "mp4"]:
+        raise HTTPException(status_code=400, detail="Unsupported file extension")
 
-    # S3에 저장할 key (폴더 느낌으로 videos/ 밑에 정리)
-    file_key = f"videos/{sessionId}_{uuid.uuid4().hex}.{ext}"
+    # 2) S3 object key 설계
+    base_time = datetime.fromtimestamp(body.sessionStartTsMs / 1000, tz=timezone.utc)
+    time_str = base_time.strftime("%Y%m%d_%H%M%S")
+    file_key = f"videos/{body.sessionId}/{time_str}.{ext}"
 
-    # S3로 업로드
+
+    # iOS mov의 Content-Type은 보통 video/quicktime
+    content_type = "video/quicktime" if ext == "mov" else "video/mp4"
+
+    # 3) Presigned URL 생성 (클라이언트가 PUT으로 업로드)
     try:
-        # fileobj 기반 업로드
-        s3.upload_fileobj(videoFile.file, AWS_S3_BUCKET, file_key)
+        upload_url = s3.generate_presigned_url(
+            ClientMethod="put_object",
+            Params={
+                "Bucket": AWS_S3_BUCKET,
+                "Key": file_key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=PRESIGN_EXPIRES_IN,
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"S3 upload failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create presigned URL: {e}",
+        )
 
-    # S3 URL 생성
+    # 4) S3에 업로드된 후 접근할 공개 URL
     file_url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{file_key}"
 
-    # DB 저장
-    db = SessionLocal()
-    try:
-        video = Video(
-            session_id=sessionId,
-            file_path=file_url,
-            start_offset_ms=startOffsetMs,
-            fps=fps,
-            duration_ms=None,
-        )
-        db.add(video)
-        db.commit()
-        db.refresh(video)
-    finally:
-        db.close()
+    return VideoPresignResponse(
+        uploadUrl=upload_url,
+        fileKey=file_key,
+        filePath=file_url,
+        expiresIn=PRESIGN_EXPIRES_IN,
+    )
 
-    return {
-        "status": "ok",
-        "videoId": video.id,
-        "sessionId": sessionId,
-        "filePath": file_url,
-        "startOffsetMs": startOffsetMs,
-        "fps": fps,
-        "durationMs": video.duration_ms,
-    }
+@app.post("/videos/complete", response_model=VideoUploadResponse)
+def complete_video_upload(
+    body: VideoCompleteRequest,
+    db: OrmSession = Depends(get_db),
+):
+    # 1) presign 때와 동일 규칙으로 S3 URL 복원
+    file_url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{body.fileKey}"
 
+    # 2) epoch ms → datetime(UTC) 변환
+    video_start_ts = datetime.fromtimestamp(body.sessionStartTsMs / 1000, tz=timezone.utc)
+
+    # 3) DB에 저장
+    video = Video(
+        session_id=body.sessionId,
+        device_id=body.deviceId,
+        file_path=file_url,
+        video_start_ts=video_start_ts,
+        created_at=now_utc(),
+    )
+
+    db.add(video)
+
+    # 세션에도 영상 경로 저장
+    session = db.query(Session).filter(Session.id == body.sessionId).first()
+    if session:
+        session.video_file_path = file_url
+    
+    db.commit()
+    db.refresh(video)
+
+    # 4) 응답
+    return VideoUploadResponse(
+        status="ok",
+        videoId=video.id,
+        sessionId=body.sessionId,
+        deviceId=body.deviceId,
+        filePath=file_url,
+        sessionStartTsMs=body.sessionStartTsMs,
+    )
 
 
 def quaternion_to_pitch_deg(qw: float, qx: float, qy: float, qz: float) -> float:
