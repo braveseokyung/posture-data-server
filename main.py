@@ -19,6 +19,7 @@ AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
 AWS_S3_BUCKET = os.getenv("AWS_S3_BUCKET", "posture-video-bucket")
 FORWARD_TILT_THRESHOLD_DEG = 25.0  # 거북목 판단 기준 각도 (deg)
 PRESIGN_EXPIRES_IN = 3600  # presigned URL 유효 시간(초)
+KST = timezone(timedelta(hours=9))
 
 # IAM Role 덕분에 access key/secret 없이 client 생성 가능
 s3 = boto3.client("s3", region_name=AWS_REGION)
@@ -219,9 +220,8 @@ app.add_middleware(
 # -----------------------------
 # 유틸 함수
 # -----------------------------
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
+def now_kst() -> datetime:
+    return datetime.now(KST)
 
 def now_ms() -> int:
     return int(datetime.utcnow().timestamp() * 1000)
@@ -248,7 +248,7 @@ def upload_sensor_batch(
         raise HTTPException(status_code=400, detail="No samples provided")
 
     # 2) 세션 시작 시각
-    base_time = datetime.fromtimestamp(batch.sessionStartTsMs / 1000, tz=timezone.utc)
+    base_time = datetime.fromtimestamp(batch.sessionStartTsMs / 1000, tz=KST)
 
     samples_to_add: list[SensorSample] = []
 
@@ -300,7 +300,7 @@ def get_video_presigned_url(body: VideoPresignRequest):
         raise HTTPException(status_code=400, detail="Unsupported file extension")
 
     # 2) S3 object key 설계
-    base_time = datetime.fromtimestamp(body.sessionStartTsMs / 1000, tz=timezone.utc)
+    base_time = datetime.fromtimestamp(body.sessionStartTsMs / 1000, tz=KST)
     time_str = base_time.strftime("%Y%m%d_%H%M%S")
     file_key = f"videos/{body.sessionId}/{time_str}.{ext}"
 
@@ -344,7 +344,7 @@ def complete_video_upload(
     file_url = f"https://{AWS_S3_BUCKET}.s3.{AWS_REGION}.amazonaws.com/{body.fileKey}"
 
     # 2) epoch ms → datetime(UTC) 변환
-    video_start_ts = datetime.fromtimestamp(body.sessionStartTsMs / 1000, tz=timezone.utc)
+    video_start_ts = datetime.fromtimestamp(body.sessionStartTsMs / 1000, tz=KST)
 
     # 3) DB에 저장
     video = Video(
@@ -352,7 +352,7 @@ def complete_video_upload(
         device_id=body.deviceId,
         file_path=file_url,
         video_start_ts=video_start_ts,
-        created_at=now_utc(),
+        created_at=now_kst(),
     )
 
     db.add(video)
