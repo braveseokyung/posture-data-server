@@ -271,18 +271,34 @@ def upload_sensor_batch(
                 device_id=batch.deviceId,
                 offset_ms=s.offsetMs,
                 ts=ts,
-                attitude_pitch=s.attitude.pitch,
-                attitude_roll=s.attitude.roll,
-                attitude_yaw=s.attitude.yaw,
-                rot_x=s.rotationRate.x,
-                rot_y=s.rotationRate.y,
-                rot_z=s.rotationRate.z,
-                grav_x=s.gravity.x,
-                grav_y=s.gravity.y,
-                grav_z=s.gravity.z,
-                acc_x=s.userAcceleration.x,
-                acc_y=s.userAcceleration.y,
-                acc_z=s.userAcceleration.z,
+                # attitude (optional)
+                attitude_pitch=(s.attitude.pitch if s.attitude else None),
+                attitude_roll =(s.attitude.roll  if s.attitude else None),
+                attitude_yaw  =(s.attitude.yaw   if s.attitude else None),
+
+                # airpods gyro (optional)
+                rot_x=(s.rotationRate.x if s.rotationRate else None),
+                rot_y=(s.rotationRate.y if s.rotationRate else None),
+                rot_z=(s.rotationRate.z if s.rotationRate else None),
+
+                # gravity (optional)
+                grav_x=(s.gravity.x if s.gravity else None),
+                grav_y=(s.gravity.y if s.gravity else None),
+                grav_z=(s.gravity.z if s.gravity else None),
+
+                # airpods accel (optional)
+                acc_x=(s.userAcceleration.x if s.userAcceleration else None),
+                acc_y=(s.userAcceleration.y if s.userAcceleration else None),
+                acc_z=(s.userAcceleration.z if s.userAcceleration else None),
+
+                # device 6-axis (optional)
+                device_gyro_x=(s.deviceGyro.x if s.deviceGyro else None),
+                device_gyro_y=(s.deviceGyro.y if s.deviceGyro else None),
+                device_gyro_z=(s.deviceGyro.z if s.deviceGyro else None),
+
+                device_acc_x=(s.deviceAcceleration.x if s.deviceAcceleration else None),
+                device_acc_y=(s.deviceAcceleration.y if s.deviceAcceleration else None),
+                device_acc_z=(s.deviceAcceleration.z if s.deviceAcceleration else None),
             )
         )
 
