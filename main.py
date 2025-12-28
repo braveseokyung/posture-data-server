@@ -2,7 +2,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Optional
 from datetime import datetime, timedelta, timezone
 import uuid
 import boto3
@@ -75,24 +75,31 @@ class SensorSample(Base):
     ts = Column(DateTime(timezone=True), nullable=False)
 
     # attitude
-    attitude_pitch = Column(Float, nullable=False)
-    attitude_roll = Column(Float, nullable=False)
-    attitude_yaw = Column(Float, nullable=False)
+    attitude_pitch = Column(Float, nullable=True)
+    attitude_roll = Column(Float, nullable=True)
+    attitude_yaw = Column(Float, nullable=True)
 
     # rotation rate
-    rot_x = Column(Float, nullable=False)
-    rot_y = Column(Float, nullable=False)
-    rot_z = Column(Float, nullable=False)
+    rot_x = Column(Float, nullable=True)
+    rot_y = Column(Float, nullable=True)
+    rot_z = Column(Float, nullable=True)
 
     # gravity
-    grav_x = Column(Float, nullable=False)
-    grav_y = Column(Float, nullable=False)
-    grav_z = Column(Float, nullable=False)
+    grav_x = Column(Float, nullable=True)
+    grav_y = Column(Float, nullable=True)
+    grav_z = Column(Float, nullable=True)
 
     # user acceleration
-    acc_x = Column(Float, nullable=False)
-    acc_y = Column(Float, nullable=False)
-    acc_z = Column(Float, nullable=False)
+    acc_x = Column(Float, nullable=True)
+    acc_y = Column(Float, nullable=True)
+    acc_z = Column(Float, nullable=True)
+
+    device_gyro_x = Column(Float, nullable=True)
+    device_gyro_y = Column(Float, nullable=True)
+    device_gyro_z = Column(Float, nullable=True)
+    device_acc_x  = Column(Float, nullable=True)
+    device_acc_y  = Column(Float, nullable=True)
+    device_acc_z  = Column(Float, nullable=True)
 
 class Video(Base):
     __tablename__ = "videos"
@@ -133,10 +140,12 @@ class Vector3(BaseModel):
 
 class SensorSampleIn(BaseModel):
     offsetMs: int
-    attitude: Attitude
-    rotationRate: Vector3
-    gravity: Vector3
-    userAcceleration: Vector3
+    attitude: Optional[Attitude] = None
+    rotationRate: Optional[Vector3] = None
+    gravity: Optional[Vector3] = None
+    userAcceleration: Optional[Vector3] = None
+    deviceGyro: Optional[Vector3] = None 
+    deviceAcceleration: Optional[Vector3] = None
 
 
 class SensorBatchIn(BaseModel):
