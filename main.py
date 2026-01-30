@@ -94,12 +94,18 @@ class SensorSample(Base):
     acc_y = Column(Float, nullable=True)
     acc_z = Column(Float, nullable=True)
 
-    device_gyro_x = Column(Float, nullable=True)
-    device_gyro_y = Column(Float, nullable=True)
-    device_gyro_z = Column(Float, nullable=True)
-    device_acc_x  = Column(Float, nullable=True)
-    device_acc_y  = Column(Float, nullable=True)
-    device_acc_z  = Column(Float, nullable=True)
+    # device_gyro_x = Column(Float, nullable=True)
+    # device_gyro_y = Column(Float, nullable=True)
+    # device_gyro_z = Column(Float, nullable=True)
+    # device_acc_x  = Column(Float, nullable=True)
+    # device_acc_y  = Column(Float, nullable=True)
+    # device_acc_z  = Column(Float, nullable=True)
+
+    ## device quaternion
+    quat_w = Column(Float, nullable=True)
+    quat_x = Column(Float, nullable=True)
+    quat_y = Column(Float, nullable=True)
+    quat_z = Column(Float, nullable=True)
 
 class Video(Base):
     __tablename__ = "videos"
@@ -137,6 +143,12 @@ class Vector3(BaseModel):
     y: float
     z: float
 
+class Quaternion(BaseModel):
+    w: float
+    x: float
+    y: float
+    z: float
+
 
 class SensorSampleIn(BaseModel):
     offsetMs: int
@@ -144,8 +156,9 @@ class SensorSampleIn(BaseModel):
     rotationRate: Optional[Vector3] = None
     gravity: Optional[Vector3] = None
     userAcceleration: Optional[Vector3] = None
-    deviceGyro: Optional[Vector3] = None 
-    deviceAcceleration: Optional[Vector3] = None
+    quaternion: Optional[Quaternion] = None   # BLE
+    # deviceGyro: Optional[Vector3] = None 
+    # deviceAcceleration: Optional[Vector3] = None
 
 
 class SensorBatchIn(BaseModel):
@@ -291,14 +304,20 @@ def upload_sensor_batch(
                 acc_y=(s.userAcceleration.y if s.userAcceleration else None),
                 acc_z=(s.userAcceleration.z if s.userAcceleration else None),
 
-                # device 6-axis (optional)
-                device_gyro_x=(s.deviceGyro.x if s.deviceGyro else None),
-                device_gyro_y=(s.deviceGyro.y if s.deviceGyro else None),
-                device_gyro_z=(s.deviceGyro.z if s.deviceGyro else None),
+                # device quaternion (optional)
+                quat_w=(s.quaternion.w if s.quaternion else None),
+                quat_x=(s.quaternion.x if s.quaternion else None),
+                quat_y=(s.quaternion.y if s.quaternion else None),
+                quat_z=(s.quaternion.z if s.quaternion else None),
 
-                device_acc_x=(s.deviceAcceleration.x if s.deviceAcceleration else None),
-                device_acc_y=(s.deviceAcceleration.y if s.deviceAcceleration else None),
-                device_acc_z=(s.deviceAcceleration.z if s.deviceAcceleration else None),
+                # # device 6-axis (optional)
+                # device_gyro_x=(s.deviceGyro.x if s.deviceGyro else None),
+                # device_gyro_y=(s.deviceGyro.y if s.deviceGyro else None),
+                # device_gyro_z=(s.deviceGyro.z if s.deviceGyro else None),
+
+                # device_acc_x=(s.deviceAcceleration.x if s.deviceAcceleration else None),
+                # device_acc_y=(s.deviceAcceleration.y if s.deviceAcceleration else None),
+                # device_acc_z=(s.deviceAcceleration.z if s.deviceAcceleration else None),
             )
         )
 
